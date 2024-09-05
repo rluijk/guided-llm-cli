@@ -1,4 +1,4 @@
-from typing import List, Dict, Callable
+from typing import List, Dict, Callable, Set
 from abc import ABC, abstractmethod
 import cmd
 from prompt_toolkit import PromptSession
@@ -17,24 +17,30 @@ def command(name: str, description: str):
         return func
     return decorator
 
-class CLIState(ABC):
-    @abstractmethod
-    def validate_command(self, command: str) -> bool:
-        pass
+class State:
+    def __init__(self, name: str):
+        self.name = name
+        self.transitions: Dict[str, State] = {}
 
-class AuthorListState(CLIState):
-    def __init__(self):
-        self.model_selected = False
-        self.authors_added = False
+    def add_transition(self, command: str, next_state: 'State'):
+        self.transitions[command] = next_state
 
-    def validate_command(self, command: str) -> bool:
-        if command == "analyze_authors" and not self.authors_added:
-            print("Please add authors first using the 'add_author' command.")
-            return False
-        if command == "analyze_authors" and not self.model_selected:
-            print("Please select a model first using the 'select_model' command.")
-            return False
-        return True
+class StateMachine:
+    def __init__(self, initial_state: State):
+        self.current_state = initial_state
+        self.states: Dict[str, State] = {initial_state.name: initial_state}
+
+    def add_state(self, state: State):
+        self.states[state.name] = state
+
+    def transition(self, command: str) -> bool:
+        if command in self.current_state.transitions:
+            self.current_state = self.current_state.transitions[command]
+            return True
+        return False
+
+    def get_available_commands(self) -> Set[str]:
+        return set(self.current_state.transitions.keys())
 
 class CommandCompleter(Completer):
     def __init__(self, cli):
@@ -46,7 +52,7 @@ class CommandCompleter(Completer):
 
         if ' ' not in line:
             # Complete commands
-            for command in self.cli.commands:
+            for command in self.cli.get_available_commands():
                 if command.startswith(word_before_cursor):
                     yield Completion(command, start_position=-len(word_before_cursor))
         else:
@@ -58,9 +64,12 @@ class CommandCompleter(Completer):
                         yield Completion(model, start_position=-len(word_before_cursor))
 
 class GenericCLI(cmd.Cmd):
-    def __init__(self, state: CLIState):
+    intro = "Welcome to the CLI. Type 'help' or '?' to list commands."
+    prompt = "(cli) "
+
+    def __init__(self, state_machine: StateMachine):
         super().__init__()
-        self.state = state
+        self.state_machine = state_machine
         self.commands = self._register_commands()
         self.command_completer = CommandCompleter(self)
         self.session = PromptSession(completer=self.command_completer, complete_style=CompleteStyle.MULTI_COLUMN)
@@ -73,11 +82,10 @@ class GenericCLI(cmd.Cmd):
                 commands[attr.command.name] = attr.command
         return commands
 
+    def get_available_commands(self) -> Set[str]:
+        return self.state_machine.get_available_commands()
+
     def cmdloop(self, intro=None):
-        """Repeatedly issue a prompt, accept input, parse an initial prefix
-        off the received input, and dispatch to action methods, passing them
-        the remainder of the line as argument.
-        """
         self.preloop()
         if intro is not None:
             self.intro = intro
@@ -107,7 +115,8 @@ class GenericCLI(cmd.Cmd):
         if cmd == '':
             return self.default(line)
         else:
-            if not self.state.validate_command(cmd):
+            if not self.state_machine.transition(cmd):
+                print(f"Command '{cmd}' not available in current state.")
                 return
             try:
                 func = getattr(self, 'do_' + cmd)
@@ -117,15 +126,37 @@ class GenericCLI(cmd.Cmd):
 
 class AuthorListCLI(GenericCLI):
     def __init__(self):
+        # Define states
+        initial_state = State("initial")
+        authors_added_state = State("authors_added")
+        model_selected_state = State("model_selected")
+        ready_state = State("ready")
+
+        # Define transitions
+        initial_state.add_transition("add_author", authors_added_state)
+        initial_state.add_transition("select_model", model_selected_state)
+        authors_added_state.add_transition("add_author", authors_added_state)
+        authors_added_state.add_transition("select_model", ready_state)
+        model_selected_state.add_transition("add_author", ready_state)
+        model_selected_state.add_transition("select_model", model_selected_state)
+        ready_state.add_transition("add_author", ready_state)
+        ready_state.add_transition("select_model", ready_state)
+        ready_state.add_transition("analyze_authors", ready_state)
+
+        # Create state machine
+        state_machine = StateMachine(initial_state)
+        state_machine.add_state(authors_added_state)
+        state_machine.add_state(model_selected_state)
+        state_machine.add_state(ready_state)
+
+        super().__init__(state_machine)
         self.authors: List[str] = []
         self.current_model: str = None
         self.available_models = ["model1", "model2", "model3"]  # Example models
-        super().__init__(AuthorListState())
 
     @command("add_author", "Add an author to the list")
     def do_add_author(self, arg):
         self.authors.append(arg)
-        self.state.authors_added = True
         print(f"Added author: {arg}")
 
     @command("list_authors", "List all added authors")
@@ -137,7 +168,6 @@ class AuthorListCLI(GenericCLI):
     def do_select_model(self, arg):
         if arg in self.available_models:
             self.current_model = arg
-            self.state.model_selected = True
             print(f"Selected model: {arg}")
         else:
             print(f"Invalid model. Available models: {', '.join(self.available_models)}")
