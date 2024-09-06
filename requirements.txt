@@ -4,3 +4,4 @@ typing-extensions>=4.0.0
 pytest>=6.0.0
 pytest-asyncio>=0.14.0
 graphviz    
+-e /Users/reneluijk/projects/UnderdogCowboy

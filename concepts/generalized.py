@@ -131,6 +131,74 @@ class GenericCLI(cmd.Cmd):
         always_available = {'help', 'exit'}
         return state_commands.union(always_available)
 
+    def visualize_state_machine(self, state_machine: StateMachine):
+        output_folder = "state_machine_visualizations"
+        os.makedirs(output_folder, exist_ok=True)
+
+        timestamp = time.strftime("%Y%m%d-%H%M%S")
+        filename = f"state_machine_{timestamp}"
+        file_path = os.path.join(output_folder, filename)
+
+        try:
+            from graphviz import Digraph
+            
+            dot = Digraph(comment='State Machine')
+            dot.attr(rankdir='LR', size='12,8')  # Increased size for better readability
+            
+            # Global graph attributes
+            dot.attr('node', shape='ellipse', style='filled', fillcolor='white', fontname='Arial', fontsize='12')
+            dot.attr('edge', fontname='Arial', fontsize='10', labelangle='45', labeldistance='2.0')
+
+            # Add nodes (states)
+            for state_name, state in state_machine.states.items():
+                if state == state_machine.current_state:
+                    dot.node(state_name, state_name, fillcolor='lightblue')
+                else:
+                    dot.node(state_name, state_name)
+
+            # Add edges (transitions)
+            for state_name, state in state_machine.states.items():
+                for command, target_state in state.transitions.items():
+                    edge_attrs = {
+                        'label': command,
+                        'fontsize': '10',
+                        'fontcolor': 'darkgreen',
+                    }
+                    if (state == state_machine.current_state and 
+                        command == state_machine.last_transition):
+                        edge_attrs.update({
+                            'color': 'red',
+                            'penwidth': '2',
+                            'fontcolor': 'red',
+                        })
+                    dot.edge(state_name, target_state.name, **edge_attrs)
+
+            # Render the graph
+            dot.render(file_path, format='png', cleanup=True)
+            # print(f"Graph has been saved as '{file_path}.png'")
+        
+        except (ImportError, subprocess.CalledProcessError):
+            print("Graphviz not available. Falling back to text representation.")
+            text_file_path = f"{file_path}.txt"
+            with open(text_file_path, 'w') as f:
+                f.write(self.get_text_representation(state_machine))
+            print(f"Text representation has been saved as '{text_file_path}'")
+
+    def get_text_representation(self,state_machine: StateMachine) -> str:
+        output = "State Machine Representation:\n"
+        output += "-----------------------------\n"
+        for state_name, state in state_machine.states.items():
+            output += f"State: {state_name}\n"
+            if state == state_machine.current_state:
+                output += "  (Current State)\n"
+            output += "  Transitions:\n"
+            for command, target_state in state.transitions.items():
+                if command == state_machine.last_transition:
+                    output += f"    - {command} -> {target_state.name} (Last Transition)\n"
+                else:
+                    output += f"    - {command} -> {target_state.name}\n"
+            output += "\n"
+        return output
 
     def cmdloop(self, intro=None):
         self.preloop()
@@ -235,74 +303,7 @@ class AuthorListCLI(GenericCLI):
         self.command_completer = AuthorListCLICompleter(self)
         self.session = PromptSession(completer=self.command_completer, complete_style=CompleteStyle.MULTI_COLUMN)
 
-    def visualize_state_machine(self, state_machine: StateMachine):
-        output_folder = "state_machine_visualizations"
-        os.makedirs(output_folder, exist_ok=True)
-
-        timestamp = time.strftime("%Y%m%d-%H%M%S")
-        filename = f"state_machine_{timestamp}"
-        file_path = os.path.join(output_folder, filename)
-
-        try:
-            from graphviz import Digraph
-            
-            dot = Digraph(comment='State Machine')
-            dot.attr(rankdir='LR', size='12,8')  # Increased size for better readability
-            
-            # Global graph attributes
-            dot.attr('node', shape='ellipse', style='filled', fillcolor='white', fontname='Arial', fontsize='12')
-            dot.attr('edge', fontname='Arial', fontsize='10', labelangle='45', labeldistance='2.0')
-
-            # Add nodes (states)
-            for state_name, state in state_machine.states.items():
-                if state == state_machine.current_state:
-                    dot.node(state_name, state_name, fillcolor='lightblue')
-                else:
-                    dot.node(state_name, state_name)
-
-            # Add edges (transitions)
-            for state_name, state in state_machine.states.items():
-                for command, target_state in state.transitions.items():
-                    edge_attrs = {
-                        'label': command,
-                        'fontsize': '10',
-                        'fontcolor': 'darkgreen',
-                    }
-                    if (state == state_machine.current_state and 
-                        command == state_machine.last_transition):
-                        edge_attrs.update({
-                            'color': 'red',
-                            'penwidth': '2',
-                            'fontcolor': 'red',
-                        })
-                    dot.edge(state_name, target_state.name, **edge_attrs)
-
-            # Render the graph
-            dot.render(file_path, format='png', cleanup=True)
-            # print(f"Graph has been saved as '{file_path}.png'")
-        
-        except (ImportError, subprocess.CalledProcessError):
-            print("Graphviz not available. Falling back to text representation.")
-            text_file_path = f"{file_path}.txt"
-            with open(text_file_path, 'w') as f:
-                f.write(self.get_text_representation(state_machine))
-            print(f"Text representation has been saved as '{text_file_path}'")
-
-    def get_text_representation(self,state_machine: StateMachine) -> str:
-        output = "State Machine Representation:\n"
-        output += "-----------------------------\n"
-        for state_name, state in state_machine.states.items():
-            output += f"State: {state_name}\n"
-            if state == state_machine.current_state:
-                output += "  (Current State)\n"
-            output += "  Transitions:\n"
-            for command, target_state in state.transitions.items():
-                if command == state_machine.last_transition:
-                    output += f"    - {command} -> {target_state.name} (Last Transition)\n"
-                else:
-                    output += f"    - {command} -> {target_state.name}\n"
-            output += "\n"
-        return output
+   
 
     @visualize_after_command('visualize_state_machine')
     @command("set_output_file", "Set the output file for analysis results")
