@@ -104,3 +104,4 @@ bh_unicode_properties.cache
 [._]sw[a-p]
 /state_machine_visualizations
 /state_machine_visualizations
+*.png
