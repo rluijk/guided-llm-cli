@@ -279,7 +279,7 @@ class AuthorListCLI(GenericCLI):
 
             # Render the graph
             dot.render(file_path, format='png', cleanup=True)
-            print(f"Graph has been saved as '{file_path}.png'")
+            # print(f"Graph has been saved as '{file_path}.png'")
         
         except (ImportError, subprocess.CalledProcessError):
             print("Graphviz not available. Falling back to text representation.")

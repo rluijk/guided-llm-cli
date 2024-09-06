@@ -197,7 +197,6 @@ def test_author_list_cli_list_authors_executable_in_initial_state(mock_stdout):
     output = mock_stdout.getvalue()
     # Check if the command executed without error (e.g., "Command not available")
     assert "Command 'list_authors' not available" not in output    
-
 class CounterCLI(GenericCLI):
     def __init__(self):
         # Define states
@@ -207,7 +206,8 @@ class CounterCLI(GenericCLI):
         # Define transitions
         zero_state.add_transition("increment", positive_state)
         positive_state.add_transition("increment", positive_state)
-        positive_state.add_transition("decrement", zero_state)
+        positive_state.add_transition("decrement", positive_state)  # Changed this
+        positive_state.add_transition("decrement_to_zero", zero_state)  # Added this
 
         # Add common commands to both states
         for state in [zero_state, positive_state]:
@@ -227,8 +227,12 @@ class CounterCLI(GenericCLI):
 
     @command("decrement", "Decrement the counter")
     def do_decrement(self, arg):
-        if self.counter > 0:
+        if self.counter > 1:
             self.counter -= 1
+            print(f"Counter: {self.counter}")
+        elif self.counter == 1:
+            self.counter = 0
+            self.state_machine.transition("decrement_to_zero")
             print(f"Counter: {self.counter}")
         else:
             print("Counter is already at zero")
@@ -257,12 +261,13 @@ def test_counter_cli_increment(mock_stdout, counter_cli):
     assert counter_cli.counter == 1
     assert "Counter: 1" in mock_stdout.getvalue()
 
+
 @patch('sys.stdout', new_callable=StringIO)
 def test_counter_cli_decrement_at_zero(mock_stdout, counter_cli):
     counter_cli.onecmd("decrement")
     assert counter_cli.state_machine.current_state.name == "zero"
     assert counter_cli.counter == 0
-    assert "Counter is already at zero" in mock_stdout.getvalue()
+    assert "Command 'decrement' not available in current state." in mock_stdout.getvalue()
 
 @patch('sys.stdout', new_callable=StringIO)
 def test_counter_cli_increment_and_decrement(mock_stdout, counter_cli):
