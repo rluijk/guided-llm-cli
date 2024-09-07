@@ -9,8 +9,13 @@ from prompt_toolkit.completion import Completer, Completion
 from prompt_toolkit.shortcuts import CompleteStyle
 from graphviz import Digraph
 import subprocess
+from tabulate import tabulate
 
 import functools
+
+        
+logging.basicConfig(level=logging.INFO)        
+
 
 def visualize_after_command(visualize_func_name: str):
     def decorator(cmd_func: Callable):
@@ -130,6 +135,19 @@ class GenericCLI(cmd.Cmd):
         state_commands = self.state_machine.get_available_commands()
         always_available = {'help', 'exit'}
         return state_commands.union(always_available)
+    
+
+    def do_help(self, arg):
+        if arg:
+            if arg in self.commands:
+                print(tabulate([[arg, self.commands[arg].description]], headers=["Command", "Description"]))
+            else:
+                print(f"No help available for '{arg}'")
+        else:
+            print("Available commands:")
+            table_data = [[cmd_name, cmd.description] for cmd_name, cmd in self.commands.items() if cmd_name in self.available_commands]
+            print(tabulate(table_data, headers=["Command", "Description"]))
+
 
     def visualize_state_machine(self, state_machine: StateMachine):
         output_folder = "state_machine_visualizations"
@@ -247,8 +265,6 @@ class GenericCLI(cmd.Cmd):
             except AttributeError:
                 return self.default(line)
 
-        
-logging.basicConfig(level=logging.DEBUG)        
 class AuthorListCLI(GenericCLI):
     def __init__(self):
         # Define states
@@ -352,8 +368,6 @@ class AuthorListCLI(GenericCLI):
     def do_exit(self, arg):
         print("Goodbye!")
         return True
-
-
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
