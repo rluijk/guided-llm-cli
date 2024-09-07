@@ -7,14 +7,13 @@ import cmd
 from prompt_toolkit import PromptSession
 from prompt_toolkit.completion import Completer, Completion
 from prompt_toolkit.shortcuts import CompleteStyle
-from graphviz import Digraph
 import subprocess
 from tabulate import tabulate
 
 import functools
 
         
-logging.basicConfig(level=logging.INFO)        
+logging.basicConfig(level=logging.DEBUG)        
 
 
 def visualize_after_command(visualize_func_name: str):
@@ -27,7 +26,6 @@ def visualize_after_command(visualize_func_name: str):
             return result
         return wrapper
     return decorator
-
 
 
 class Command:
@@ -55,18 +53,19 @@ class StateMachine:
     def __init__(self, initial_state: State):
         self.current_state = initial_state
         self.states: Dict[str, State] = {initial_state.name: initial_state}
-        self.last_transition: Optional[str] = None
-        
+        # self.last_transition = command
+        self.last_transition = None
+
     def add_state(self, state: State):
         self.states[state.name] = state
 
     def transition(self, command: str) -> bool:
         if command in self.current_state.transitions:
             self.current_state = self.current_state.transitions[command]
-            self.last_transition = command
+            self.last_transition = command  
             return True
         return False
-    
+
     def get_available_commands(self) -> Set[str]:
         return set(self.current_state.transitions.keys())
 
@@ -136,7 +135,6 @@ class GenericCLI(cmd.Cmd):
         always_available = {'help', 'exit'}
         return state_commands.union(always_available)
     
-
     def do_help(self, arg):
         if arg:
             if arg in self.commands:
@@ -147,7 +145,6 @@ class GenericCLI(cmd.Cmd):
             print("Available commands:")
             table_data = [[cmd_name, cmd.description] for cmd_name, cmd in self.commands.items() if cmd_name in self.available_commands]
             print(tabulate(table_data, headers=["Command", "Description"]))
-
 
     def visualize_state_machine(self, state_machine: StateMachine):
         output_folder = "state_machine_visualizations"
@@ -266,6 +263,10 @@ class GenericCLI(cmd.Cmd):
                 return self.default(line)
 
 class AuthorListCLI(GenericCLI):
+
+    intro = "Welcome to the Authors. Type 'help' or '?' to list commands."
+    prompt = "(Authors) "
+
     def __init__(self):
         # Define states
         initial_state = State("initial", self)
@@ -273,13 +274,12 @@ class AuthorListCLI(GenericCLI):
         model_selected_state = State("model_selected", self)
         ready_state = State("ready", self)
 
-        # Define transitions
+        # Define transitions   
         initial_state.add_transition("set_output_file", initial_state)
         initial_state.add_transition("list_authors", initial_state) 
         initial_state.add_transition("add_author", authors_added_state)
         initial_state.add_transition("select_model", model_selected_state)
         initial_state.add_transition("show_settings", initial_state)
-
 
         authors_added_state.add_transition("set_output_file", authors_added_state)
         authors_added_state.add_transition("list_authors", authors_added_state)
@@ -287,14 +287,12 @@ class AuthorListCLI(GenericCLI):
         authors_added_state.add_transition("add_author", authors_added_state)
         authors_added_state.add_transition("select_model", ready_state)
 
-
         ready_state.add_transition("set_output_file", ready_state)
         ready_state.add_transition("show_settings", ready_state)
         ready_state.add_transition("list_authors", ready_state)
         ready_state.add_transition("add_author", ready_state)
         ready_state.add_transition("select_model", ready_state)
         ready_state.add_transition("analyze_authors", ready_state)
-
 
         model_selected_state.add_transition("show_settings", model_selected_state)
         model_selected_state.add_transition("list_authors", model_selected_state)
@@ -309,6 +307,7 @@ class AuthorListCLI(GenericCLI):
         state_machine.add_state(ready_state)
 
         super().__init__(state_machine)
+        time.sleep(1)
         self.visualize_state_machine(state_machine)
 
         self.authors: List[str] = []
