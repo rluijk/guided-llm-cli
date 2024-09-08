@@ -11,10 +11,8 @@ import subprocess
 from tabulate import tabulate
 
 import functools
-
         
 logging.basicConfig(level=logging.DEBUG)        
-
 
 def visualize_after_command(visualize_func_name: str):
     def decorator(cmd_func: Callable):
@@ -69,7 +67,6 @@ class StateMachine:
     def get_available_commands(self) -> Set[str]:
         return set(self.current_state.transitions.keys())
 
-    
 class CommandCompleter(Completer):
     def __init__(self, cli):
         self.cli = cli
