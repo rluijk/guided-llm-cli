@@ -8,3 +8,4 @@ Key features:
 - Seamless integration of deterministic logic and LLM capabilities
 - Flexible state management and command sequencing
 - Consistent error handling and user feedback
+- Works well but under guidance with LLM prompting. 
