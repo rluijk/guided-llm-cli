@@ -1,3 +1,19 @@
+"""
+This module implements a flexible Command-Line Interface (CLI) with a state machine.
+It provides a framework for creating interactive command-line applications with
+state-based behavior, command completion, and visualization capabilities.
+
+Key components:
+- State and StateMachine: Manage the application's state and transitions
+- Command and command decorator: Define and register CLI commands
+- GenericCLI: Base class for creating custom CLIs
+- CommandCompleter: Provides command completion functionality
+- Visualization: Methods to visualize the state machine
+
+The module uses various libraries such as cmd, prompt_toolkit, and graphviz
+for enhanced functionality and user experience.
+"""
+
 import time
 import os
 
@@ -19,6 +35,16 @@ import logging
 logging.basicConfig(level=logging.INFO)        
 
 def visualize_after_command(visualize_func_name: str):
+    """
+    A decorator that calls a visualization function after executing a command.
+
+    Args:
+        visualize_func_name (str): The name of the visualization function to call.
+
+    Returns:
+        Callable: A decorated function that executes the original command and then
+                  calls the specified visualization function.
+    """
     def decorator(cmd_func: Callable):
         @functools.wraps(cmd_func)
         def wrapper(self, *args, **kwargs):
@@ -30,27 +56,64 @@ def visualize_after_command(visualize_func_name: str):
     return decorator
 
 class Command:
+    """
+    Represents a CLI command with its associated function, name, and description.
+
+    Attributes:
+        func (Callable): The function to be executed when the command is invoked.
+        name (str): The name of the command.
+        description (str): A brief description of what the command does.
+    """
     def __init__(self, func: Callable, name: str, description: str):
         self.func = func
         self.name = name
         self.description = description
 
 def command(name: str, description: str):
+    """
+    A decorator for registering CLI commands.
+
+    Args:
+        name (str): The name of the command.
+        description (str): A brief description of what the command does.
+
+    Returns:
+        Callable: A decorator function that registers the command.
+    """
     def decorator(func):
         func.command = Command(func, name, description)
         return func
     return decorator
 
 class State:
+    """
+    Represents a state in the state machine.
+
+    Attributes:
+        name (str): The name of the state.
+        transitions (Dict[str, State]): A dictionary of possible transitions from this state.
+        _cli: The associated CLI instance.
+        show (bool): Whether to show this state in visualizations.
+    """
     def __init__(self, name: str, cli=None):
         self.name = name
         self.transitions: Dict[str, State] = {}
         self._cli = cli  # Store the CLI instance
+        self.show = True
+    
 
     def add_transition(self, command: str, next_state: 'State'):
         self.transitions[command] = next_state
 
 class StateMachine:
+    """
+    Manages the states and transitions of the application.
+
+    Attributes:
+        current_state (State): The current state of the machine.
+        states (Dict[str, State]): A dictionary of all states in the machine.
+        last_transition: The last transition that occurred.
+    """
     def __init__(self, initial_state: State):
         self.current_state = initial_state
         self.states: Dict[str, State] = {initial_state.name: initial_state}
@@ -71,6 +134,12 @@ class StateMachine:
         return set(self.current_state.transitions.keys())
 
 class CommandCompleter(Completer):
+    """
+    Provides command completion functionality for the CLI.
+
+    This class is responsible for generating completion suggestions
+    based on the current input and available commands.
+    """
     def __init__(self, cli):
         self.cli = cli
 
@@ -95,11 +164,29 @@ class CommandCompleter(Completer):
         return []
 
 class GenericCLICompleter(CommandCompleter):
+    """
+    A command completer specifically for the GenericCLI.
+
+    This class extends CommandCompleter to provide completions
+    for the generic CLI implementation.
+    """
     def get_command_specific_completions(self, line, word_before_cursor):
         # Generic CLI doesn't have any specific completions
         return []
 
 class GenericCLI(cmd.Cmd):
+    """
+    A generic Command-Line Interface that integrates with a state machine.
+
+    This class provides the base functionality for creating custom CLIs
+    with state-based behavior, command completion, and visualization capabilities.
+
+    Attributes:
+        state_machine (StateMachine): The associated state machine.
+        commands (Dict[str, Command]): A dictionary of available commands.
+        command_completer (GenericCLICompleter): The command completer for this CLI.
+        session (PromptSession): The prompt session for handling user input.
+    """
     intro = "Welcome to the CLI. Type 'help' or '?' to list commands."
     prompt = "(cli) "
 
@@ -111,7 +198,19 @@ class GenericCLI(cmd.Cmd):
         self.session = PromptSession(completer=self.command_completer, complete_style=CompleteStyle.MULTI_COLUMN)
         self.refresh_commands()
 
+    @property
+    def dynamic_prompt(self):
+        base_prompt = self.prompt.strip()[1:-1]  # Remove parentheses and whitespace
+        return f"({base_prompt}:{self.state_machine.current_state.name}) "
+
+
     def _register_commands(self) -> Dict[str, Command]:
+        """
+        Registers all methods decorated with @command as CLI commands.
+
+        Returns:
+            Dict[str, Command]: A dictionary of registered commands.
+        """
         commands = {}
         for attr_name in dir(self):
             attr = getattr(self, attr_name)
@@ -120,10 +219,19 @@ class GenericCLI(cmd.Cmd):
         return commands
 
     def refresh_commands(self):
+        """
+        Updates the list of available commands based on the current state.
+        """
         self.available_commands = self.get_available_commands()
         logging.debug(f"Available commands: {', '.join(self.available_commands)}")
 
     def get_available_commands(self) -> Set[str]:
+        """
+        Retrieves the set of commands available in the current state.
+
+        Returns:
+            Set[str]: A set of available command names.
+        """
         state_commands = self.state_machine.get_available_commands()
         always_available = {'help', 'exit'}
         return state_commands.union(always_available)
@@ -209,6 +317,15 @@ class GenericCLI(cmd.Cmd):
         return output
 
     def cmdloop(self, intro=None):
+        """
+        Repeatedly issues a prompt, accepts input, and dispatches to action methods.
+
+        This method overrides the default cmd.Cmd.cmdloop to integrate with
+        the state machine and provide enhanced functionality.
+
+        Args:
+            intro: The introduction message to display (optional).
+        """
         self.preloop()
         if intro is not None:
             self.intro = intro
@@ -218,7 +335,9 @@ class GenericCLI(cmd.Cmd):
         while not stop:
             try:
                 self.refresh_commands()  # Refresh commands before each prompt
-                line = self.session.prompt(self.prompt)
+                # line = self.session.prompt(self.prompt)
+                #line = self.session.prompt(self.get_prompt())
+                line = self.session.prompt(self.dynamic_prompt)
                 line = self.precmd(line)
                 stop = self.onecmd(line)
                 stop = self.postcmd(stop, line)
@@ -230,6 +349,18 @@ class GenericCLI(cmd.Cmd):
         self.postloop()
 
     def onecmd(self, line):
+        """
+        Interpret the argument as though it had been typed in response to the prompt.
+
+        This method overrides the default cmd.Cmd.onecmd to integrate with
+        the state machine and handle state transitions.
+
+        Args:
+            line (str): The command line to interpret.
+
+        Returns:
+            bool: A flag indicating whether the interpretation should stop.
+        """
         cmd, arg, line = self.parseline(line)
         if not line:
             return self.emptyline()
