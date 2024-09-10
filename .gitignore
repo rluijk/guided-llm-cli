@@ -105,3 +105,4 @@ bh_unicode_properties.cache
 /state_machine_visualizations
 /state_machine_visualizations
 *.png
+/uccli_env

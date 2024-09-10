@@ -6,7 +6,9 @@ from .main import (
     CommandCompleter,
     Command,
     command,
-    visualize_after_command
+    visualize_after_command,
+    cancellable_command,
+    input_required_command
 )
 
 __all__ = [
@@ -17,5 +19,7 @@ __all__ = [
     'CommandCompleter',
     'Command',
     'command',
-    'visualize_after_command'
+    'visualize_after_command',
+    'cancellable_command',
+    'input_required_command'
 ]

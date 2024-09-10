@@ -34,6 +34,7 @@ import logging
         
 logging.basicConfig(level=logging.INFO)        
 
+""" DECORATORS """
 def visualize_after_command(visualize_func_name: str):
     """
     A decorator that calls a visualization function after executing a command.
@@ -54,6 +55,37 @@ def visualize_after_command(visualize_func_name: str):
             return result
         return wrapper
     return decorator
+
+def cancellable_command(prompt="Are you sure you want to proceed? (y/n): "):
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(self, arg):
+            confirm = input(prompt)
+            if confirm.lower() != 'y':
+                print("Operation cancelled.")
+                return "CANCEL_TRANSITION"
+            result = func(self, arg)
+            return result if result is not None else "CONTINUE"
+        return wrapper
+    return decorator
+
+def input_required_command(prompt=None, error_message=None):
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(self, arg):
+            if prompt and not arg:
+                user_input = input(prompt)
+                if not user_input:
+                    print(error_message or "Input required. Command cancelled.")
+                    return "CANCEL_TRANSITION"
+                arg = user_input
+            result = func(self, arg)
+            return result if result is not None else "CONTINUE"
+        return wrapper
+    return decorator
+
+
+""" CLASSES """
 
 class Command:
     """
@@ -84,6 +116,7 @@ def command(name: str, description: str):
         func.command = Command(func, name, description)
         return func
     return decorator
+
 
 class State:
     """
@@ -335,8 +368,6 @@ class GenericCLI(cmd.Cmd):
         while not stop:
             try:
                 self.refresh_commands()  # Refresh commands before each prompt
-                # line = self.session.prompt(self.prompt)
-                #line = self.session.prompt(self.get_prompt())
                 line = self.session.prompt(self.dynamic_prompt)
                 line = self.precmd(line)
                 stop = self.onecmd(line)
@@ -375,13 +406,24 @@ class GenericCLI(cmd.Cmd):
                 print(f"Command '{cmd}' not available in current state.")
                 return False
             
-            # Check if the command is a transition
-            if cmd in self.state_machine.current_state.transitions:
-                self.state_machine.transition(cmd)
-            
-            # Execute the command
             try:
                 func = getattr(self, 'do_' + cmd)
-                return func(arg)
+                result = func(arg)
+                
+                if result == "CANCEL_TRANSITION":
+                    return False
+                
+                if cmd in self.state_machine.current_state.transitions:
+                    self.state_machine.transition(cmd)
+                
+                if hasattr(self, 'visualize_state_machine'):
+                    self.visualize_state_machine(self.state_machine)
+                
+                return result == "EXIT"  # Only exit if the command explicitly returns "EXIT"
             except AttributeError:
                 return self.default(line)
+
+    def postcmd(self, stop, line):
+        if not stop:
+            print(f"\nCurrent state: {self.state_machine.current_state.name}")
+        return stop
