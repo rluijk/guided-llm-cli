@@ -223,6 +223,10 @@ class GenericCLI(cmd.Cmd):
     intro = "Welcome to the CLI. Type 'help' or '?' to list commands."
     prompt = "(cli) "
 
+    @property
+    def implementation_name(self):
+        return self.__class__.__name__
+
     def __init__(self, state_machine: StateMachine):
         super().__init__()
         self.state_machine = state_machine
@@ -294,6 +298,9 @@ class GenericCLI(cmd.Cmd):
             dot = Digraph(comment='State Machine')
             dot.attr(rankdir='LR', size='12,8')  # Increased size for better readability
             
+            # Add implementation name to the top left using the property
+            dot.attr(label=f'Implementation: {self.implementation_name}', labelloc='t', labeljust='l')
+       
             # Global graph attributes
             dot.attr('node', shape='ellipse', style='filled', fillcolor='white', fontname='Arial', fontsize='12')
             dot.attr('edge', fontname='Arial', fontsize='10', labelangle='45', labeldistance='2.0')
