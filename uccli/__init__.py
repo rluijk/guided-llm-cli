@@ -5,6 +5,7 @@ from .main import (
     State,
     CommandCompleter,
     Command,
+    StorageManager,
     command,
     visualize_after_command,
     cancellable_command,
@@ -19,6 +20,7 @@ __all__ = [
     'CommandCompleter',
     'Command',
     'command',
+    'StorageManager',
     'visualize_after_command',
     'cancellable_command',
     'input_required_command'

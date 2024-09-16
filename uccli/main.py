@@ -14,8 +14,10 @@ The module uses various libraries such as cmd, prompt_toolkit, and graphviz
 for enhanced functionality and user experience.
 """
 
-import time
 import os
+
+import time
+from datetime import datetime
 
 from typing import List, Dict, Callable, Set
 from abc import ABC, abstractmethod
@@ -32,9 +34,41 @@ from tabulate import tabulate
 import functools
 import logging
         
+import json
+from typing import Dict, List, Any
+from dataclasses import dataclass, field, asdict
+
+
 logging.basicConfig(level=logging.INFO)        
 
+LEGEND_ITEMS = {
+    '🔵': 'Input Required',
+    '⭕': 'Cancellable',
+    'Dashed': 'Cancellable',
+    'Red': 'Last Transition'
+}
+
 """ DECORATORS """
+import inspect
+
+def get_decorators(func):
+    decorators = []
+    # Get the source code of the function
+    source = inspect.getsource(func)
+    # Split the source into lines
+    lines = source.split('\n')
+    # Iterate through lines preceding the function definition
+    for line in lines:
+        line = line.strip()
+        if line.startswith('def '):
+            break
+        if line.startswith('@'):
+            # Extract decorator name (remove '@' and any arguments)
+            decorator = line[1:].split('(')[0]
+            decorators.append(decorator)
+    return decorators
+
+
 def visualize_after_command(visualize_func_name: str):
     """
     A decorator that calls a visualization function after executing a command.
@@ -235,6 +269,54 @@ class GenericCLI(cmd.Cmd):
         self.session = PromptSession(completer=self.command_completer, complete_style=CompleteStyle.MULTI_COLUMN)
         self.refresh_commands()
 
+        self.storage_manager = StorageManager()
+        self.current_storage = None
+
+    @command("new_session", "Create a new working session")
+    def do_new_session(self, arg):
+        """Create a new working session. Usage: new_session <session_name>"""
+        if not arg:
+            print("Please provide a name for the new session.")
+            return
+        try:
+            self.current_storage = self.storage_manager.create_session(arg)
+            print(f"New session '{arg}' created and activated.")
+        except ValueError as e:
+            print(f"Error: {e}")
+
+    @command("load_session", "Load an existing working session")
+    def do_load_session(self, arg):
+        """Load an existing working session. Usage: load_session <session_name>"""
+        if not arg:
+            print("Please provide the name of the session to load.")
+            return
+        try:
+            self.current_storage = self.storage_manager.load_session(arg)
+            print(f"Session '{arg}' loaded and activated.")
+        except ValueError as e:
+            print(f"Error: {e}")
+
+    @command("list_sessions", "List all available sessions")
+    def do_list_sessions(self, arg):
+        """List all available sessions."""
+        sessions = self.storage_manager.list_sessions()
+        if sessions:
+            print("Available sessions:")
+            for session in sessions:
+                print(f"  - {session}")
+        else:
+            print("No sessions found.")
+
+    def save_current_session(self):
+        if self.current_storage:
+            self.storage_manager.save_current_session(self.current_storage)
+
+    def precmd(self, line):
+        # Save the current session before each command (if exists)
+        self.save_current_session()
+        return line
+
+
     @property
     def dynamic_prompt(self):
         base_prompt = self.prompt.strip()[1:-1]  # Remove parentheses and whitespace
@@ -270,7 +352,7 @@ class GenericCLI(cmd.Cmd):
             Set[str]: A set of available command names.
         """
         state_commands = self.state_machine.get_available_commands()
-        always_available = {'help', 'exit'}
+        always_available = {'help', 'exit','new_session','load_session','list_sessions'}
         return state_commands.union(always_available)
     
     def do_help(self, arg):
@@ -296,11 +378,29 @@ class GenericCLI(cmd.Cmd):
             from graphviz import Digraph
             
             dot = Digraph(comment='State Machine')
-            dot.attr(rankdir='LR', size='12,8')  # Increased size for better readability
+            dot.attr(rankdir='LR', size='12,8')
             
-            # Add implementation name to the top left using the property
-            dot.attr(label=f'Implementation: {self.implementation_name}', labelloc='t', labeljust='l')
-       
+            # Create a separate subgraph for the legend
+            with dot.subgraph(name='cluster_legend') as legend:
+                legend.attr(label='Legend', labeljust='r', labelloc='b', fontname='Arial-Bold', fontsize='14')
+                legend.attr(style='filled', color='lightgrey', fillcolor='#f0f0f0')  # Light background
+                legend.attr(penwidth='1')  # Thin border
+                
+                # Add legend items with improved spacing and icons
+                legend.node('legend_input', '🔵 Input Required', shape='plaintext', fontname='Arial')
+                legend.node('legend_cancel', '⭕ Cancellable', shape='plaintext', fontname='Arial')
+                legend.node('legend_dashed', 'Dashed: Cancellable', shape='plaintext', fontname='Arial')
+                legend.node('legend_red', 'Red: Last Transition', shape='plaintext', fontname='Arial')
+                
+                # Arrange legend items vertically with increased spacing
+                legend.edge('legend_input', 'legend_cancel', style='invis')
+                legend.edge('legend_cancel', 'legend_dashed', style='invis')
+                legend.edge('legend_dashed', 'legend_red', style='invis')
+                legend.attr(rankdir='TB', ranksep='0.3')
+
+            # Add implementation name to the top left
+            dot.attr(label=f'Implementation: {self.implementation_name}', labelloc='t', labeljust='l', fontname='Arial-Bold')
+            
             # Global graph attributes
             dot.attr('node', shape='ellipse', style='filled', fillcolor='white', fontname='Arial', fontsize='12')
             dot.attr('edge', fontname='Arial', fontsize='10', labelangle='45', labeldistance='2.0')
@@ -320,6 +420,20 @@ class GenericCLI(cmd.Cmd):
                         'fontsize': '10',
                         'fontcolor': 'darkgreen',
                     }
+                    
+                    # Check for additional decorators
+                    if hasattr(self, f'do_{command}'):
+                        method = getattr(self, f'do_{command}')
+                        decorators = get_decorators(method)
+                        
+                        # Add visual cues based on decorators
+                        if 'input_required_command' in decorators:
+                            edge_attrs['color'] = 'blue'
+                            edge_attrs['label'] += ' 🔵'
+                        if 'cancellable_command' in decorators:
+                            edge_attrs['style'] = 'dashed'
+                            edge_attrs['label'] += ' ⭕'
+                    
                     if (state == state_machine.current_state and 
                         command == state_machine.last_transition):
                         edge_attrs.update({
@@ -327,12 +441,12 @@ class GenericCLI(cmd.Cmd):
                             'penwidth': '2',
                             'fontcolor': 'red',
                         })
+                    
                     dot.edge(state_name, target_state.name, **edge_attrs)
 
             # Render the graph
             dot.render(file_path, format='png', cleanup=True)
-            # print(f"Graph has been saved as '{file_path}.png'")
-        
+
         except (ImportError, subprocess.CalledProcessError):
             print("Graphviz not available. Falling back to text representation.")
             text_file_path = f"{file_path}.txt"
@@ -434,3 +548,143 @@ class GenericCLI(cmd.Cmd):
         if not stop:
             print(f"\nCurrent state: {self.state_machine.current_state.name}")
         return stop
+    
+"""
+Overview of the key methods related to storage options in our CLI system, along with their use cases:
+
+Storage Creation and Management:
+
+new_session(name): Create a new working session.
+    Use case: Starting a new task or project.
+
+load_session(name): Load an existing session.
+    Use case: Resuming work on a previous task.
+
+list_sessions(): List all available sessions.
+    Use case: Reviewing existing work or choosing a session to load.
+
+
+Data Storage and Retrieval:
+
+update_data(key, value): Store or update a piece of data in the current session.
+    Use case: Saving the result of an operation or updating the state of the current task.
+
+get_data(key): Retrieve a piece of data from the current session.
+    Use case: Accessing previously stored information to use in a command.
+
+
+Command History:
+
+add_command_result(command, result): Log the execution of a command and its result.
+    Use case: Keeping a record of actions performed in a session, useful for auditing or undoing operations.
+
+
+Session Persistence:
+
+save_current_session(): Save the current session to a file.
+    Use case: Ensuring all changes are persisted, typically called automatically before each command.
+
+to_json(): Convert the current session data to a JSON string.
+    Use case: Preparing session data for storage or transmission.
+
+from_json(json_str): Create a session from a JSON string.
+    Use case: Reconstructing a session from stored data.
+
+
+Session Information:
+
+session_info(): Display information about the current session.
+    Use case: Reviewing the current state of the session, including stored data and command history.
+
+
+Error Handling and Validation:
+
+Checking for current_storage before operations.
+    Use case: Ensuring a session is active before performing operations that require session data.
+
+
+These methods provide a comprehensive toolkit for managing persistent state in a CLI application. 
+They allow for creating separate workspaces (sessions) for different tasks, storing and retrieving data
+within those sessions, tracking command history, and persisting all this information between runs of the 
+application. This system enables complex, stateful CLI applications that can maintain context across 
+multiple uses, supporting workflows that span multiple sittings or even multiple users working on the same
+data at different times.
+
+"""
+class SharedStorage:
+    def __init__(self, version: str = "1.0.0"):
+        self.version = version
+        self.data: Dict[str, Any] = {}
+        self.command_history: List[Dict[str, Any]] = []
+
+    def update_data(self, key: str, value: Any) -> None:
+        self.data[key] = value
+
+    def get_data(self, key: str) -> Any:
+        return self.data.get(key)
+
+    def add_command_result(self, command: str, result: Any) -> None:
+        self.command_history.append({
+            "command": command,
+            "result": result,
+            "timestamp": datetime.now().isoformat()
+        })
+
+    def to_json(self) -> str:
+        return json.dumps({
+            "version": self.version,
+            "data": self.data,
+            "command_history": self.command_history
+        }, default=str, indent=2)
+
+    @classmethod
+    def from_json(cls, json_str: str) -> 'SharedStorage':
+        data = json.loads(json_str)
+        storage = cls(version=data["version"])
+        storage.data = data["data"]
+        storage.command_history = data["command_history"]
+        return storage
+
+    def save_to_file(self, filename: str) -> None:
+        with open(filename, 'w') as f:
+            f.write(self.to_json())
+
+    @classmethod
+    def load_from_file(cls, filename: str) -> 'SharedStorage':
+        with open(filename, 'r') as f:
+            return cls.from_json(f.read())
+        
+
+class StorageManager:
+    def __init__(self, base_dir: str = ".uccli_sessions"):
+        self.base_dir = base_dir
+        self.current_session = None
+        self.ensure_base_dir()
+
+    def ensure_base_dir(self):
+        os.makedirs(self.base_dir, exist_ok=True)
+
+    def create_session(self, name: str) -> SharedStorage:
+        session_path = os.path.join(self.base_dir, f"{name}.json")
+        if os.path.exists(session_path):
+            raise ValueError(f"Session '{name}' already exists")
+        storage = SharedStorage()
+        storage.save_to_file(session_path)
+        self.current_session = name
+        return storage
+
+    def load_session(self, name: str) -> SharedStorage:
+        session_path = os.path.join(self.base_dir, f"{name}.json")
+        if not os.path.exists(session_path):
+            raise ValueError(f"Session '{name}' does not exist")
+        self.current_session = name
+        return SharedStorage.load_from_file(session_path)
+
+    def save_current_session(self, storage: SharedStorage):
+        if not self.current_session:
+            raise ValueError("No active session")
+        session_path = os.path.join(self.base_dir, f"{self.current_session}.json")
+        storage.save_to_file(session_path)
+
+    def list_sessions(self) -> List[str]:
+        return [f.replace('.json', '') for f in os.listdir(self.base_dir) if f.endswith('.json')]
