@@ -38,6 +38,7 @@ import json
 from typing import Dict, List, Any
 from dataclasses import dataclass, field, asdict
 
+from .agent_communication import AgentCommunicator, DummyAgentCommunicator
 
 logging.basicConfig(level=logging.INFO)        
 
@@ -186,20 +187,50 @@ class StateMachine:
         self.states: Dict[str, State] = {initial_state.name: initial_state}
         # self.last_transition = command
         self.last_transition = None
+        self.app = None
 
     def add_state(self, state: State):
         self.states[state.name] = state
 
+    def change_state(self, new_state):
+        if new_state in self.states:
+            self.current_state = self.states[new_state]
+            self.on_state_changed()  # Call this after every state change
+
+    def on_state_changed(self):
+        """Automatically save the state after every state change."""
+        if self.app and self.app.current_storage:
+            # Update the session with the new current state
+            self.app.current_storage.update_data("current_state", self.current_state.name)
+            
+            # Automatically log the command if available
+            if self.last_transition:
+                self.app.current_storage.add_command_result(self.last_transition, {"state": self.current_state.name})
+            
+            # Save the current session (no need to pass current_storage)
+            self.app.storage_manager.save_current_session()
+            
+            logging.info(f"State '{self.current_state.name}' and command '{self.last_transition}' saved to session.")
+
+
     def transition(self, command: str) -> bool:
         if command in self.current_state.transitions:
+            # Update the current state
             self.current_state = self.current_state.transitions[command]
-            self.last_transition = command  
+            
+            # Record the last transition command
+            self.last_transition = command  # Ensure last_transition is updated
+            
+            # Trigger state save after transition
+            self.on_state_changed()  # Save state and command
             return True
         return False
+
 
     def get_available_commands(self) -> Set[str]:
         return set(self.current_state.transitions.keys())
 
+    
 class CommandCompleter(Completer):
     """
     Provides command completion functionality for the CLI.
@@ -261,9 +292,10 @@ class GenericCLI(cmd.Cmd):
     def implementation_name(self):
         return self.__class__.__name__
 
-    def __init__(self, state_machine: StateMachine):
+    def __init__(self, state_machine: StateMachine, agent_communicator: AgentCommunicator = None):
         super().__init__()
         self.state_machine = state_machine
+        self.agent_communicator = agent_communicator or DummyAgentCommunicator()
         self.commands = self._register_commands()
         self.command_completer = GenericCLICompleter(self)
         self.session = PromptSession(completer=self.command_completer, complete_style=CompleteStyle.MULTI_COLUMN)
@@ -322,6 +354,16 @@ class GenericCLI(cmd.Cmd):
         base_prompt = self.prompt.strip()[1:-1]  # Remove parentheses and whitespace
         return f"({base_prompt}:{self.state_machine.current_state.name}) "
 
+    def update_agent_clibase(self):
+        update = {
+            "current_state": self.state_machine.current_state.name,
+            "last_transition": self.state_machine.last_transition,
+            "available_commands": list(self.get_available_commands()),
+            "storage_data": self.current_storage.data if self.current_storage else {},
+            "command_history": self.current_storage.command_history if self.current_storage else [],
+            "steak": True
+        }
+        self.agent_communicator.send_update(update)        
 
     def _register_commands(self) -> Dict[str, Command]:
         """
@@ -499,7 +541,6 @@ class GenericCLI(cmd.Cmd):
                 print("^D")
                 break
         self.postloop()
-
     def onecmd(self, line):
         """
         Interpret the argument as though it had been typed in response to the prompt.
@@ -526,20 +567,23 @@ class GenericCLI(cmd.Cmd):
             if cmd not in available_commands:
                 print(f"Command '{cmd}' not available in current state.")
                 return False
-            
+
             try:
                 func = getattr(self, 'do_' + cmd)
+                # result = func(arg, self.current_storage)  # Pass current_storage here
                 result = func(arg)
                 
                 if result == "CANCEL_TRANSITION":
                     return False
-                
+
                 if cmd in self.state_machine.current_state.transitions:
                     self.state_machine.transition(cmd)
-                
+
                 if hasattr(self, 'visualize_state_machine'):
                     self.visualize_state_machine(self.state_machine)
-                
+
+                self.update_agent_clibase()
+
                 return result == "EXIT"  # Only exit if the command explicitly returns "EXIT"
             except AttributeError:
                 return self.default(line)
@@ -618,6 +662,33 @@ class SharedStorage:
         self.command_history: List[Dict[str, Any]] = []
 
     def update_data(self, key: str, value: Any) -> None:
+        """
+        Update or store a value in the session data associated with the given key.
+
+        This method is central to the CLI's functionality, where users collaborate
+        with agents (LLMs) to create and modify structured data, such as assessment 
+        categories or other task-specific content. 
+
+        The data stored via this method can be highly structured, depending on the 
+        specific CLI use case. For example, in an assessment task, it might store 
+        JSON structures representing categories with corresponding 5-point scales 
+        or other complex content.
+
+        Parameters:
+            key (str): The unique identifier for the data being stored. This could 
+                    represent an assessment category, feedback entry, or any 
+                    other data relevant to the session.
+            value (Any): The data to be stored under the specified key. The value 
+                        can be simple (e.g., a string, number) or complex 
+                        (e.g., a dictionary representing a JSON structure).
+
+        Note:
+            - If a value already exists for the given key, it will be overwritten.
+            - The CLI relies on this behavior to allow users to refine and adjust 
+            their inputs throughout the session.
+            - Each update is also logged in the command history to maintain an 
+            audit trail, ensuring transparency and accountability in user actions.
+        """
         self.data[key] = value
 
     def get_data(self, key: str) -> Any:
@@ -654,11 +725,11 @@ class SharedStorage:
         with open(filename, 'r') as f:
             return cls.from_json(f.read())
         
-
 class StorageManager:
     def __init__(self, base_dir: str = ".uccli_sessions"):
-        self.base_dir = base_dir
+        self.base_dir = os.path.expanduser(base_dir)
         self.current_session = None
+        self.shared_storage = None  # This should be set when a session is created or loaded
         self.ensure_base_dir()
 
     def ensure_base_dir(self):
@@ -671,6 +742,7 @@ class StorageManager:
         storage = SharedStorage()
         storage.save_to_file(session_path)
         self.current_session = name
+        self.shared_storage = storage  # Set shared_storage after creating a session
         return storage
 
     def load_session(self, name: str) -> SharedStorage:
@@ -678,13 +750,44 @@ class StorageManager:
         if not os.path.exists(session_path):
             raise ValueError(f"Session '{name}' does not exist")
         self.current_session = name
-        return SharedStorage.load_from_file(session_path)
+        self.shared_storage = SharedStorage.load_from_file(session_path)  # Set shared_storage after loading a session
+        return self.shared_storage
 
-    def save_current_session(self, storage: SharedStorage):
+    def save_current_session(self):
         if not self.current_session:
             raise ValueError("No active session")
         session_path = os.path.join(self.base_dir, f"{self.current_session}.json")
-        storage.save_to_file(session_path)
+        self.shared_storage.save_to_file(session_path)
 
     def list_sessions(self) -> List[str]:
         return [f.replace('.json', '') for f in os.listdir(self.base_dir) if f.endswith('.json')]
+
+    # update_data method that logs each update as a separate command in command_history
+    def update_data(self, key: str, value: Any) -> None:
+        if not self.shared_storage:
+            raise ValueError("No active session")
+
+        # Update the data in the current session
+        self.shared_storage.update_data(key, value)
+        
+        # Automatically log the data update to the command history
+        self.shared_storage.add_command_result(f"update_data: {key}", {"value": value})
+
+        # Save the session after updating
+        self.save_current_session()
+
+    def get_data(self, key: str) -> Any:
+        if not self.shared_storage:
+            raise ValueError("No active session")
+        return self.shared_storage.get_data(key)
+
+    def add_command_result(self, command: str, result: Any) -> None:
+        if not self.shared_storage:
+            raise ValueError("No active session")
+        self.shared_storage.add_command_result(command, result)
+        self.save_current_session()  # Automatically save after updating
+
+    def get_command_history(self) -> List[Dict[str, Any]]:
+        if not self.shared_storage:
+            raise ValueError("No active session")
+        return self.shared_storage.command_history
