@@ -7,6 +7,8 @@ from .main import (
     Command,
     StorageManager,
     command,
+    AgentCommunicator,
+    DummyAgentCommunicator,
     visualize_after_command,
     cancellable_command,
     input_required_command
@@ -20,6 +22,8 @@ __all__ = [
     'CommandCompleter',
     'Command',
     'command',
+    'AgentCommunicator',
+    'DummyAgentCommunicator',
     'StorageManager',
     'visualize_after_command',
     'cancellable_command',
